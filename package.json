@@ -51,7 +51,7 @@
     "vscode extension"
   ],
   "homepage": "https://github.com/GauvainThery/green-hosting-inspector",
-  "publisher": "Gauvain Thery",
+  "publisher": "GauvainThery",
   "main": "./out/extension.js",
   "scripts": {
     "compile": "npm run check-types && node esbuild.js",
