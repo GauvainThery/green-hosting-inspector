@@ -60,8 +60,6 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
 
-    outputChannel.appendLine(`Checking document: ${document.fileName}.`);
-
     const text = document.getText();
     const urls = Array.from(new Set(extractUrls(text)));
 
@@ -119,16 +117,28 @@ export function activate(context: vscode.ExtensionContext) {
       })
     );
 
-    // Apply decorations
-    editor.setDecorations(greenDecorationType, greenDecorations);
     editor.setDecorations(nonGreenDecorationType, nonGreenDecorations);
+    editor.setDecorations(greenDecorationType, greenDecorations);
   };
 
   const onDidOpenTextDocument = vscode.workspace.onDidOpenTextDocument(
     async (document) => {
-      const editor = vscode.window.visibleTextEditors.find(
-        (e) => e.document === document
-      );
+      const editors = vscode.window.visibleTextEditors;
+
+      if (editors.length > 0) {
+        for (const editor of editors) {
+          await applyDecorations(editor);
+        }
+      } else {
+        outputChannel.appendLine(
+          `No visible editors found for document: ${document.fileName}`
+        );
+      }
+    }
+  );
+
+  const onDidChangeActiveTextEditor = vscode.window.onDidChangeActiveTextEditor(
+    async (editor) => {
       if (editor) {
         await applyDecorations(editor);
       }
@@ -157,6 +167,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(onDidChangeTextDocument);
   context.subscriptions.push(onDidOpenTextDocument);
+  context.subscriptions.push(onDidChangeActiveTextEditor);
 }
 
 async function inspectGreenHosting(
@@ -179,7 +190,6 @@ async function inspectGreenHosting(
   const apiUrl = `https://api.thegreenwebfoundation.org/api/v3/greencheck/${encodeURIComponent(
     url
   )}`;
-  outputChannel.appendLine(`Checking URL: ${apiUrl}`);
 
   let data: GreenCheckResponse;
   try {
