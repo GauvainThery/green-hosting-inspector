@@ -13,6 +13,7 @@
     "type": "git",
     "url": "https://github.com/GauvainThery/green-hosting-inspector"
   },
+  "icon": "images/icon.png",
   "license": "MIT",
   "activationEvents": [
     "onStartupFinished",
@@ -53,12 +54,13 @@
   "publisher": "Gauvain Thery",
   "main": "./out/extension.js",
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src",
-    "test": "vscode-test"
+    "compile": "npm run check-types && node esbuild.js",
+    "check-types": "tsc --noEmit",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "vscode:prepublish": "npm run package",
+    "package": "npm run check-types && node esbuild.js --production"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
@@ -68,6 +70,7 @@
     "@typescript-eslint/parser": "^8.28.0",
     "@vscode/test-cli": "^0.0.10",
     "@vscode/test-electron": "^2.4.1",
+    "esbuild": "^0.25.2",
     "eslint": "^9.23.0",
     "typescript": "^5.8.2"
   },
