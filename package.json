@@ -9,16 +9,49 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
-  "main": "./out/extension.js",
-  "contributes": {
-    "commands": [
-      {
-        "command": "extension.inspectGreenHosting",
-        "title": "Inspect Green Hosting"
-      }
-    ]
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GauvainThery/green-hosting-inspector"
   },
+  "license": "MIT",
+  "activationEvents": [
+    "onStartupFinished",
+    "onLanguage:javascript",
+    "onLanguage:typescript",
+    "onLanguage:python",
+    "onLanguage:java",
+    "onLanguage:csharp",
+    "onLanguage:html",
+    "onLanguage:css",
+    "onLanguage:json",
+    "onLanguage:xml",
+    "onLanguage:markdown",
+    "onLanguage:php",
+    "onLanguage:ruby",
+    "onLanguage:go",
+    "onLanguage:rust",
+    "onLanguage:vue",
+    "onLanguage:svelte",
+    "onLanguage:scss",
+    "onLanguage:yaml",
+    "onLanguage:dockerfile",
+    "onLanguage:shellscript",
+    "onLanguage:r",
+    "onLanguage:plaintext"
+  ],
+  "keywords": [
+    "green hosting",
+    "sustainability",
+    "environment",
+    "urls",
+    "hosting",
+    "code analysis",
+    "visual studio code",
+    "vscode extension"
+  ],
+  "homepage": "https://github.com/GauvainThery/green-hosting-inspector",
+  "publisher": "Gauvain Thery",
+  "main": "./out/extension.js",
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",

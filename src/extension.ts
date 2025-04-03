@@ -13,7 +13,7 @@ let urlCache = new Map<
   { green: boolean; hostedBy?: string; timestamp: number }
 >();
 
-const CACHE_EXPIRY = 24 * 60 * 60 * 1000; // 24 hours
+const CACHE_EXPIRY = 24 * 60 * 60 * 1000 * 7; // 1 week
 
 export function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('Green Hosting Inspector');
@@ -40,19 +40,36 @@ export function activate(context: vscode.ExtensionContext) {
       'csharp',
       'html',
       'css',
+      'json',
+      'xml',
+      'markdown',
+      'php',
+      'ruby',
+      'go',
+      'rust',
+      'vue',
+      'svelte',
+      'scss',
+      'yaml',
+      'dockerfile',
+      'shellscript',
+      'r',
+      'plaintext',
     ];
     if (!supportedLanguages.includes(document.languageId)) {
       return;
     }
 
-    outputChannel.appendLine(
-      `Checking document: ${document.fileName}, Language: ${document.languageId}`
-    );
+    outputChannel.appendLine(`Checking document: ${document.fileName}.`);
 
     const text = document.getText();
-
-    // Extract URLs from the text
     const urls = Array.from(new Set(extractUrls(text)));
+
+    outputChannel.appendLine(`Found ${urls.length} URLs.`);
+    if (urls.length === 0) {
+      outputChannel.appendLine('No URLs found.');
+      return;
+    }
 
     const greenDecorations: { range: vscode.Range; hoverMessage?: string }[] =
       [];
@@ -61,61 +78,51 @@ export function activate(context: vscode.ExtensionContext) {
       hoverMessage?: string;
     }[] = [];
 
-    for (const url of urls) {
-      try {
-        const { green, hostedBy } = await inspectGreenHosting(url);
-        outputChannel.appendLine(
-          `URL: ${url}, Green Hosted: ${green}, Hosted By: ${
-            hostedBy || 'Unknown'
-          }`
-        );
+    await Promise.all(
+      urls.map(async (url) => {
+        try {
+          const { green, hostedBy } = await inspectGreenHosting(url);
+          outputChannel.appendLine(
+            `URL: ${url}, Green Hosted: ${green}, Hosted By: ${
+              hostedBy || 'Unknown'
+            }`
+          );
 
-        // Find the range of the URL in the document
-        const urlRegex = new RegExp(url, 'g');
-        let match;
-        while ((match = urlRegex.exec(text)) !== null) {
-          const startPos = document.positionAt(match.index);
-          const endPos = document.positionAt(match.index + match[0].length);
-          const range = new vscode.Range(startPos, endPos);
+          // Find the range of the URL in the document
+          const urlRegex = new RegExp(url, 'g');
+          let match;
+          while ((match = urlRegex.exec(text)) !== null) {
+            const startPos = document.positionAt(match.index);
+            const endPos = document.positionAt(match.index + match[0].length);
+            const range = new vscode.Range(startPos, endPos);
 
-          if (green) {
-            greenDecorations.push({
-              range,
-              hoverMessage: hostedBy
-                ? `Green hosted by: ${hostedBy}`
-                : 'Green hosting provider unknown',
-            });
-          } else {
-            nonGreenDecorations.push({
-              range,
-              hoverMessage:
-                'As far as we know, this URL is not hosted on a green hosting provider.',
-            });
+            if (green) {
+              greenDecorations.push({
+                range,
+                hoverMessage: hostedBy
+                  ? `Green hosted by: ${hostedBy}`
+                  : 'Green hosting provider unknown',
+              });
+            } else {
+              nonGreenDecorations.push({
+                range,
+                hoverMessage:
+                  'As far as we know, this URL is not hosted on a green hosting provider.',
+              });
+            }
           }
+        } catch (error) {
+          vscode.window.showErrorMessage(
+            `Error checking URL ${url}: ${JSON.stringify(error)}`
+          );
         }
-      } catch (error) {
-        vscode.window.showErrorMessage(
-          `Error checking URL ${url}: ${JSON.stringify(error)}`
-        );
-      }
-    }
+      })
+    );
 
     // Apply decorations
     editor.setDecorations(greenDecorationType, greenDecorations);
     editor.setDecorations(nonGreenDecorationType, nonGreenDecorations);
   };
-
-  const command = vscode.commands.registerCommand(
-    'extension.inspectGreenHosting',
-    async () => {
-      const editor = vscode.window.activeTextEditor;
-      if (editor) {
-        await applyDecorations(editor);
-      } else {
-        vscode.window.showErrorMessage('No active editor found.');
-      }
-    }
-  );
 
   let debounceTimeout: NodeJS.Timeout | undefined;
   const DEBOUNCE_DELAY = 1000;
@@ -137,7 +144,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
   );
 
-  context.subscriptions.push(command, onDidChangeTextDocument);
+  context.subscriptions.push(onDidChangeTextDocument);
 }
 
 async function inspectGreenHosting(
@@ -183,29 +190,32 @@ async function inspectGreenHosting(
 }
 
 function extractUrls(text: string): string[] {
-  // Regex to match URLs encapsulated in quotes (", ', or `) with query parameters and fragments
   const urlRegex =
-    /["'`](https?:\/\/[a-zA-Z0-9-]+\.[a-zA-Z]{2,}([^\s"'`]*))["'`]/g;
+    /['"`](?:\w*\s*)?(https?:\/\/)?(www\.)?([a-zA-Z0-9-]+\.[a-zA-Z]{2,})(?:\s*\w*)?['"`]/g;
 
-  const matches = [];
+  const matches: string[] = [];
   let match;
 
   // Extract all matches
   while ((match = urlRegex.exec(text)) !== null) {
-    matches.push(match[1]); // Capture the URL inside the quotes
+    matches.push(match[0].replaceAll(/['"`]/g, '')); // Capture the URL inside the quotes
   }
 
   return matches
     .map((url) => {
       try {
         const hostname = new URL(url).hostname;
+        outputChannel.appendLine(`Extracted URLs: ${hostname}`);
         return hostname.replace(/^www\./, '');
-      } catch {
+      } catch (error) {
+        outputChannel.appendLine(`Invalid URL: ${error}`);
         return url.replace(/^www\./, '');
       }
     })
     .filter((url) => {
-      if (url.includes('localhost')) return false;
+      if (url.includes('localhost')) {
+        return false;
+      }
       const ipRegex = /^(https?:\/\/)?(\d{1,3}\.){3}\d{1,3}/;
       return !ipRegex.test(url);
     });
