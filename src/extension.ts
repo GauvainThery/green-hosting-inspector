@@ -176,10 +176,6 @@ async function inspectGreenHosting(
     }
   }
 
-  // "asdcasd hello.fr dawqdfas"
-  ('check test.fr  dwdw');
-  // "https://www.test.com"
-
   const apiUrl = `https://api.thegreenwebfoundation.org/api/v3/greencheck/${encodeURIComponent(
     url
   )}`;
@@ -207,15 +203,14 @@ async function inspectGreenHosting(
 
 function extractUrls(text: string): string[] {
   const urlRegex =
-    /['"`](?:\w*\s*)?(https?:\/\/)?(www\.)?([a-zA-Z0-9-]+\.[a-zA-Z]{2,})(?:\s*\w*)?['"`]/g;
+    /['"`](?:\w*\s*)(https?:\/\/)?(www\.)?(\b([a-zA-Z0-9-]+\.)?[a-zA-Z0-9-]+\.[a-zA-Z]{2,})(?:\W)?.*['"`\n]/g;
 
   const matches: string[] = [];
   let match;
 
   // Extract all matches
   while ((match = urlRegex.exec(text)) !== null) {
-    outputChannel.appendLine(`Match found: ${match}`);
-    matches.push(match[3].replaceAll(/['"`]/g, '')); // Capture the URL inside the quotes
+    matches.push(match[3]);
   }
 
   return matches.filter((url) => {
