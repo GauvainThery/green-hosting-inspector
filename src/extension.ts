@@ -124,6 +124,17 @@ export function activate(context: vscode.ExtensionContext) {
     editor.setDecorations(nonGreenDecorationType, nonGreenDecorations);
   };
 
+  const onDidOpenTextDocument = vscode.workspace.onDidOpenTextDocument(
+    async (document) => {
+      const editor = vscode.window.visibleTextEditors.find(
+        (e) => e.document === document
+      );
+      if (editor) {
+        await applyDecorations(editor);
+      }
+    }
+  );
+
   let debounceTimeout: NodeJS.Timeout | undefined;
   const DEBOUNCE_DELAY = 1000;
 
@@ -145,6 +156,7 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   context.subscriptions.push(onDidChangeTextDocument);
+  context.subscriptions.push(onDidOpenTextDocument);
 }
 
 async function inspectGreenHosting(
@@ -163,6 +175,10 @@ async function inspectGreenHosting(
       urlCache.delete(url); // Remove expired cache
     }
   }
+
+  // "asdcasd hello.fr dawqdfas"
+  ('check test.fr  dwdw');
+  // "https://www.test.com"
 
   const apiUrl = `https://api.thegreenwebfoundation.org/api/v3/greencheck/${encodeURIComponent(
     url
@@ -198,27 +214,17 @@ function extractUrls(text: string): string[] {
 
   // Extract all matches
   while ((match = urlRegex.exec(text)) !== null) {
-    matches.push(match[0].replaceAll(/['"`]/g, '')); // Capture the URL inside the quotes
+    outputChannel.appendLine(`Match found: ${match}`);
+    matches.push(match[3].replaceAll(/['"`]/g, '')); // Capture the URL inside the quotes
   }
 
-  return matches
-    .map((url) => {
-      try {
-        const hostname = new URL(url).hostname;
-        outputChannel.appendLine(`Extracted URLs: ${hostname}`);
-        return hostname.replace(/^www\./, '');
-      } catch (error) {
-        outputChannel.appendLine(`Invalid URL: ${error}`);
-        return url.replace(/^www\./, '');
-      }
-    })
-    .filter((url) => {
-      if (url.includes('localhost')) {
-        return false;
-      }
-      const ipRegex = /^(https?:\/\/)?(\d{1,3}\.){3}\d{1,3}/;
-      return !ipRegex.test(url);
-    });
+  return matches.filter((url) => {
+    if (url.includes('localhost')) {
+      return false;
+    }
+    const ipRegex = /^(https?:\/\/)?(\d{1,3}\.){3}\d{1,3}/;
+    return !ipRegex.test(url);
+  });
 }
 
 export function deactivate() {}
