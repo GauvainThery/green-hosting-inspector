@@ -4,6 +4,14 @@ All notable changes to the "green-hosting-inspector" extension will be documente
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [2.0.2] - 2026-02-02
+
+### Fixed
+
+- **Improved code pattern filtering**: Better detection of code constructs vs real URLs.
+  - Added comprehensive keyword exclusion list (logger, this, console, import, etc.)
+  - Excludes patterns preceded by `identifier.` or followed by `(`
+
 ## [2.0.1] - 2026-02-02
 
 ### Fixed

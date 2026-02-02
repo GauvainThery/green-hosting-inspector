@@ -392,6 +392,35 @@ function extractUrlsWithRanges(document: vscode.TextDocument): UrlMatch[] {
     'babel.config', 'eslint.config', 'prettier.config', 'jest.config',
   ]);
 
+  // Code keywords/objects that should never be treated as domains
+  const codeKeywords = new Set([
+    // JavaScript/TypeScript keywords and objects
+    'this', 'self', 'super', 'import', 'export', 'require', 'module', 'exports',
+    'console', 'logger', 'log', 'debug', 'error', 'warn', 'info', 'trace',
+    'window', 'document', 'navigator', 'location', 'history', 'screen',
+    'process', 'global', 'globalThis', 'Buffer',
+    'Math', 'JSON', 'Object', 'Array', 'String', 'Number', 'Boolean', 'Symbol',
+    'Date', 'Promise', 'Proxy', 'Reflect', 'Map', 'Set', 'WeakMap', 'WeakSet',
+    'Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError',
+    'Function', 'RegExp', 'Int8Array', 'Uint8Array', 'Float32Array', 'Float64Array',
+    'Intl', 'Atomics', 'SharedArrayBuffer', 'DataView', 'ArrayBuffer',
+    // Common variable names
+    'app', 'server', 'client', 'db', 'database', 'api', 'router', 'route',
+    'req', 'res', 'request', 'response', 'ctx', 'context', 'config', 'options',
+    'props', 'state', 'store', 'dispatch', 'action', 'reducer', 'selector',
+    'component', 'element', 'node', 'event', 'handler', 'callback', 'listener',
+    'util', 'utils', 'helper', 'helpers', 'service', 'services', 'controller',
+    'model', 'schema', 'type', 'types', 'interface', 'enum',
+    // Python
+    'print', 'len', 'str', 'int', 'float', 'list', 'dict', 'tuple', 'set',
+    'cls', 'kwargs', 'args',
+    // Testing
+    'describe', 'it', 'test', 'expect', 'assert', 'mock', 'spy', 'jest', 'vi',
+    // React/Vue/Angular
+    'React', 'Vue', 'Angular', 'Component', 'Directive', 'Pipe', 'Injectable',
+    'useState', 'useEffect', 'useRef', 'useMemo', 'useCallback', 'useContext',
+  ]);
+
   // TLDs that are commonly used (to reduce false positives)
   const validTlds = new Set([
     'com', 'org', 'net', 'io', 'co', 'dev', 'app', 'ai', 'cloud', 'tech',
@@ -434,6 +463,32 @@ function extractUrlsWithRanges(document: vscode.TextDocument): UrlMatch[] {
     const fullMatch = domainMatch[0];
     const domain = domainMatch[1].toLowerCase();
     const tld = domainMatch[2].toLowerCase();
+    const domainParts = domain.split('.');
+    const firstPart = domainParts[0];
+    
+    // Skip if the first part of the domain is a known code keyword
+    // e.g., "logger.info", "this.service", "console.log"
+    if (codeKeywords.has(firstPart)) {
+      continue;
+    }
+    
+    // Skip if this looks like a code construct:
+    // 1. Preceded by identifier character + dot (e.g., myLogger.info, app.get)
+    // 2. Followed by opening parenthesis (method call)
+    const charBefore = domainMatch.index > 0 ? text[domainMatch.index - 1] : '';
+    const charTwoBefore = domainMatch.index > 1 ? text[domainMatch.index - 2] : '';
+    const charAfter = text[domainMatch.index + fullMatch.length] || '';
+    
+    // Check if preceded by "identifier." pattern (variable.method)
+    // e.g., "myLogger.info" -> char before 'i' is '.', char two before is 'r' (alphanumeric)
+    if (charBefore === '.' && /[a-zA-Z0-9_$]/.test(charTwoBefore)) {
+      continue;
+    }
+    
+    // Check if followed by ( - indicates method call (e.g., "app.listen()")
+    if (charAfter === '(') {
+      continue;
+    }
     
     // Check if this domain was already matched as a full URL
     const alreadyMatched = matches.some(m => {
