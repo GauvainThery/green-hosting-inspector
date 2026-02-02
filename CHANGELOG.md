@@ -4,6 +4,13 @@ All notable changes to the "green-hosting-inspector" extension will be documente
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [2.0.1] - 2026-02-02
+
+### Fixed
+
+- **Fixed API reliability**: Switched from batch API to parallel individual domain checks for more reliable results.
+- **Fixed decorations disappearing**: Decorations now persist when closing and reopening files.
+
 ## [2.0.0] - 2026-02-02
 
 ### Improved

@@ -28,8 +28,15 @@ let urlCache = new Map<string, CacheEntry>();
 const CACHE_EXPIRY = 24 * 60 * 60 * 1000 * 7; // 1 week
 const CACHE_STORAGE_KEY = 'greenHostingCache';
 
-// Track which documents have been processed to avoid redundant work
-let processedDocuments = new Map<string, { hash: number; version: number }>();
+// Track which documents have been processed to avoid redundant API calls
+// Store the decorations so we can reapply them when editor is reopened
+interface DocumentCache {
+  hash: number;
+  version: number;
+  greenRanges: { range: vscode.Range; hoverMessage: vscode.MarkdownString }[];
+  notVerifiedRanges: { range: vscode.Range; hoverMessage: vscode.MarkdownString }[];
+}
+let processedDocuments = new Map<string, DocumentCache>();
 
 export function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('Green Hosting Inspector');
@@ -93,7 +100,10 @@ export function activate(context: vscode.ExtensionContext) {
     const cached = processedDocuments.get(docKey);
     
     if (cached && cached.hash === textHash && cached.version === document.version) {
-      outputChannel.appendLine(`Skipping ${document.fileName} - no changes detected`);
+      // Content unchanged - reapply cached decorations (they don't persist when editor closes)
+      outputChannel.appendLine(`Reapplying cached decorations for ${document.fileName}`);
+      editor.setDecorations(greenDecorationType, cached.greenRanges);
+      editor.setDecorations(notVerifiedDecorationType, cached.notVerifiedRanges);
       return;
     }
 
@@ -107,7 +117,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (urlMatches.length === 0) {
       editor.setDecorations(greenDecorationType, []);
       editor.setDecorations(notVerifiedDecorationType, []);
-      processedDocuments.set(docKey, { hash: textHash, version: document.version });
+      processedDocuments.set(docKey, { hash: textHash, version: document.version, greenRanges: [], notVerifiedRanges: [] });
       return;
     }
 
@@ -162,8 +172,13 @@ export function activate(context: vscode.ExtensionContext) {
     editor.setDecorations(notVerifiedDecorationType, notVerifiedDecorations);
     editor.setDecorations(greenDecorationType, greenDecorations);
     
-    // Mark document as processed
-    processedDocuments.set(docKey, { hash: textHash, version: document.version });
+    // Mark document as processed and store decorations for reapplication
+    processedDocuments.set(docKey, {
+      hash: textHash,
+      version: document.version,
+      greenRanges: greenDecorations.map(d => ({ range: d.range, hoverMessage: d.hoverMessage as vscode.MarkdownString })),
+      notVerifiedRanges: notVerifiedDecorations.map(d => ({ range: d.range, hoverMessage: d.hoverMessage as vscode.MarkdownString })),
+    });
     
     // Persist cache periodically
     saveCacheToStorage();
@@ -210,6 +225,23 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(onDidChangeTextDocument);
   context.subscriptions.push(onDidOpenTextDocument);
   context.subscriptions.push(onDidChangeActiveTextEditor);
+
+  // Register clear cache command
+  const clearCacheCommand = vscode.commands.registerCommand(
+    'greenHostingInspector.clearCache',
+    async () => {
+      urlCache.clear();
+      processedDocuments.clear();
+      await globalState.update(CACHE_STORAGE_KEY, {});
+      vscode.window.showInformationMessage('Green Hosting Inspector: Cache cleared!');
+      
+      // Re-apply decorations to current editor
+      if (vscode.window.activeTextEditor) {
+        await applyDecorations(vscode.window.activeTextEditor);
+      }
+    }
+  );
+  context.subscriptions.push(clearCacheCommand);
   
   // Apply decorations to currently active editor on activation
   if (vscode.window.activeTextEditor) {
@@ -289,45 +321,25 @@ async function batchInspectGreenHosting(
     return results;
   }
 
-  outputChannel.appendLine(`Checking ${domainsToCheck.length} domains via API...`);
+  outputChannel.appendLine(`Checking ${domainsToCheck.length} domains via API in parallel...`);
 
-  // Use batch API for multiple domains (up to 500 per request)
-  const BATCH_SIZE = 100;
-  for (let i = 0; i < domainsToCheck.length; i += BATCH_SIZE) {
-    const batch = domainsToCheck.slice(i, i + BATCH_SIZE);
-    
+  // Check domains in parallel
+  const promises = domainsToCheck.map(async (domain) => {
     try {
-      if (batch.length === 1) {
-        // Single domain - use simple endpoint
-        const result = await checkSingleDomain(batch[0]);
-        results.set(batch[0], result);
-        urlCache.set(batch[0], { ...result, timestamp: now });
-      } else {
-        // Multiple domains - use batch endpoint
-        const batchResults = await checkMultipleDomains(batch);
-        for (const [domain, result] of batchResults) {
-          results.set(domain, result);
-          urlCache.set(domain, { ...result, timestamp: now });
-        }
-      }
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      outputChannel.appendLine(`Batch API error: ${errorMsg}`);
-      // Fallback to individual checks
-      for (const domain of batch) {
-        try {
-          const result = await checkSingleDomain(domain);
-          results.set(domain, result);
-          urlCache.set(domain, { ...result, timestamp: now });
-        } catch (e) {
-          const domainError = e instanceof Error ? e.message : String(e);
-          outputChannel.appendLine(`Error checking ${domain}: ${domainError}`);
-          const errorResult = { green: null as boolean | null, error: domainError };
-          results.set(domain, errorResult);
-          urlCache.set(domain, { ...errorResult, timestamp: now });
-        }
-      }
+      const result = await checkSingleDomain(domain);
+      return { domain, result };
+    } catch (e) {
+      const domainError = e instanceof Error ? e.message : String(e);
+      outputChannel.appendLine(`Error checking ${domain}: ${domainError}`);
+      return { domain, result: { green: null as boolean | null, error: domainError } };
     }
+  });
+
+  const responses = await Promise.all(promises);
+  
+  for (const { domain, result } of responses) {
+    results.set(domain, result);
+    urlCache.set(domain, { ...result, timestamp: now });
   }
 
   return results;
@@ -335,6 +347,9 @@ async function batchInspectGreenHosting(
 
 async function checkSingleDomain(domain: string): Promise<{ green: boolean | null; hostedBy?: string; error?: string }> {
   const apiUrl = `https://api.thegreenwebfoundation.org/api/v3/greencheck/${encodeURIComponent(domain)}`;
+  
+  outputChannel.appendLine(`Checking domain: ${domain}`);
+  outputChannel.appendLine(`API URL: ${apiUrl}`);
   
   const response = await fetch(apiUrl);
   if (!response.ok) {
@@ -345,42 +360,8 @@ async function checkSingleDomain(domain: string): Promise<{ green: boolean | nul
   }
   
   const data = (await response.json()) as GreenCheckResponse;
+  outputChannel.appendLine(`API Response for ${domain}: green=${data.green}, hosted_by=${data.hosted_by}`);
   return { green: data.green, hostedBy: data.hosted_by };
-}
-
-async function checkMultipleDomains(domains: string[]): Promise<Map<string, { green: boolean | null; hostedBy?: string; error?: string }>> {
-  const results = new Map<string, { green: boolean | null; hostedBy?: string; error?: string }>();
-  
-  // Green Web Foundation batch API
-  const apiUrl = 'https://api.thegreenwebfoundation.org/api/v3/greencheck';
-  
-  const response = await fetch(apiUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(domains),
-  });
-  
-  if (!response.ok) {
-    if (response.status === 429) {
-      throw new Error('Rate limited - too many requests');
-    }
-    throw new Error(`Batch API error (HTTP ${response.status})`);
-  }
-  
-  const data = await response.json() as Record<string, GreenCheckResponse>;
-  
-  for (const domain of domains) {
-    const result = data[domain];
-    if (result) {
-      results.set(domain, { green: result.green, hostedBy: result.hosted_by });
-    } else {
-      results.set(domain, { green: null, error: 'Domain not found in API response' });
-    }
-  }
-  
-  return results;
 }
 
 /**
