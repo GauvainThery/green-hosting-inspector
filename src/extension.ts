@@ -6,27 +6,52 @@ interface GreenCheckResponse {
   [key: string]: any;
 }
 
-let outputChannel: vscode.OutputChannel;
+interface CacheEntry {
+  green: boolean | null; // null = error/unknown
+  hostedBy?: string;
+  error?: string;
+  timestamp: number;
+}
 
-let urlCache = new Map<
-  string,
-  { green: boolean; hostedBy?: string; timestamp: number }
->();
+interface UrlMatch {
+  url: string;
+  domain: string;
+  range: vscode.Range;
+}
+
+let outputChannel: vscode.OutputChannel;
+let globalState: vscode.Memento;
+
+// In-memory cache (fast access)
+let urlCache = new Map<string, CacheEntry>();
 
 const CACHE_EXPIRY = 24 * 60 * 60 * 1000 * 7; // 1 week
+const CACHE_STORAGE_KEY = 'greenHostingCache';
+
+// Track which documents have been processed to avoid redundant work
+let processedDocuments = new Map<string, { hash: number; version: number }>();
 
 export function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('Green Hosting Inspector');
-  outputChannel.show();
+  globalState = context.globalState;
 
+  // Restore cache from persistent storage
+  restoreCacheFromStorage();
+
+  // Green: verified green hosting - dot before URL
   let greenDecorationType = vscode.window.createTextEditorDecorationType({
-    backgroundColor: 'rgba(144, 238, 144, 0.5)',
-    color: 'black',
+    before: {
+      contentText: '•',
+      color: '#22c55e',
+    },
   });
 
-  let nonGreenDecorationType = vscode.window.createTextEditorDecorationType({
-    backgroundColor: 'rgba(255, 99, 71, 0.5)',
-    color: 'white',
+  // Not verified: no evidence of green hosting - dot before URL
+  let notVerifiedDecorationType = vscode.window.createTextEditorDecorationType({
+    before: {
+      contentText: '•',
+      color: '#eab308',
+    },
   });
 
   const applyDecorations = async (editor: vscode.TextEditor) => {
@@ -61,78 +86,95 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     const text = document.getText();
-    const urls = Array.from(new Set(extractUrls(text)));
-
-    outputChannel.appendLine(`Found ${urls.length} URLs.`);
-    if (urls.length === 0) {
-      outputChannel.appendLine('No URLs found.');
+    
+    // Check if document has changed since last processing
+    const docKey = document.uri.toString();
+    const textHash = simpleHash(text);
+    const cached = processedDocuments.get(docKey);
+    
+    if (cached && cached.hash === textHash && cached.version === document.version) {
+      outputChannel.appendLine(`Skipping ${document.fileName} - no changes detected`);
       return;
     }
 
-    const greenDecorations: { range: vscode.Range; hoverMessage?: string }[] =
-      [];
-    const nonGreenDecorations: {
-      range: vscode.Range;
-      hoverMessage?: string;
-    }[] = [];
+    const urlMatches = extractUrlsWithRanges(document);
+    
+    // Get unique domains for API calls
+    const uniqueDomains = [...new Set(urlMatches.map(m => m.domain))];
 
-    await Promise.all(
-      urls.map(async (url) => {
-        try {
-          const { green, hostedBy } = await inspectGreenHosting(url);
-          outputChannel.appendLine(
-            `URL: ${url}, Green Hosted: ${green}, Hosted By: ${
-              hostedBy || 'Unknown'
-            }`
-          );
+    outputChannel.appendLine(`Found ${urlMatches.length} URL occurrences (${uniqueDomains.length} unique domains) in ${document.fileName}`);
+    
+    if (urlMatches.length === 0) {
+      editor.setDecorations(greenDecorationType, []);
+      editor.setDecorations(notVerifiedDecorationType, []);
+      processedDocuments.set(docKey, { hash: textHash, version: document.version });
+      return;
+    }
 
-          // Find the range of the URL in the document
-          const urlRegex = new RegExp(url, 'g');
-          let match;
-          while ((match = urlRegex.exec(text)) !== null) {
-            const startPos = document.positionAt(match.index);
-            const endPos = document.positionAt(match.index + match[0].length);
-            const range = new vscode.Range(startPos, endPos);
+    // Batch check all unique domains
+    const domainResults = await batchInspectGreenHosting(uniqueDomains);
 
-            if (green) {
-              greenDecorations.push({
-                range,
-                hoverMessage: hostedBy
-                  ? `Green hosted by: ${hostedBy}`
-                  : 'Green hosting provider unknown',
-              });
-            } else {
-              nonGreenDecorations.push({
-                range,
-                hoverMessage:
-                  'As far as we know, this URL is not hosted on a green hosting provider.',
-              });
-            }
-          }
-        } catch (error) {
-          vscode.window.showErrorMessage(
-            `Error checking URL ${url}: ${JSON.stringify(error)}`
-          );
+    const greenDecorations: vscode.DecorationOptions[] = [];
+    const notVerifiedDecorations: vscode.DecorationOptions[] = [];
+
+    for (const match of urlMatches) {
+      const result = domainResults.get(match.domain);
+      
+      if (result?.green === true) {
+        // Verified green hosting
+        const hoverMsg = new vscode.MarkdownString();
+        hoverMsg.isTrusted = true;
+        hoverMsg.appendMarkdown(`**✅ Green Web Hosting Verified**\n\n`);
+        hoverMsg.appendMarkdown(`**Domain:** \`${match.domain}\`\n\n`);
+        if (result.hostedBy) {
+          hoverMsg.appendMarkdown(`**Hosted by:** ${result.hostedBy}\n\n`);
         }
-      })
-    );
+        hoverMsg.appendMarkdown(`This website is hosted on infrastructure that runs on renewable energy, verified by the Green Web Foundation.\n\n`);
+        hoverMsg.appendMarkdown(`[Learn more about green hosting](https://www.thegreenwebfoundation.org/)`);
+        
+        greenDecorations.push({
+          range: match.range,
+          hoverMessage: hoverMsg,
+        });
+      } else {
+        // Not verified (either false or null/error)
+        const hoverMsg = new vscode.MarkdownString();
+        hoverMsg.isTrusted = true;
+        hoverMsg.appendMarkdown(`**No Evidence of Green Hosting**\n\n`);
+        hoverMsg.appendMarkdown(`**Domain:** \`${match.domain}\`\n\n`);
+        
+        if (result?.error) {
+          hoverMsg.appendMarkdown(`*Could not verify: ${result.error}*\n\n`);
+        }
+        
+        hoverMsg.appendMarkdown(`The Green Web Foundation has no evidence that this domain is hosted on green infrastructure.\n\n`);
+        hoverMsg.appendMarkdown(`This doesn't necessarily mean the hosting is not green — it may simply not be registered in the Green Web dataset.\n\n`);
+        hoverMsg.appendMarkdown(`[Check on Green Web Foundation](https://www.thegreenwebfoundation.org/green-web-check/?url=${encodeURIComponent(match.domain)}) · `);
+        hoverMsg.appendMarkdown(`[Find green hosting providers](https://www.thegreenwebfoundation.org/directory/)`);
+        
+        notVerifiedDecorations.push({
+          range: match.range,
+          hoverMessage: hoverMsg,
+        });
+      }
+    }
 
-    editor.setDecorations(nonGreenDecorationType, nonGreenDecorations);
+    editor.setDecorations(notVerifiedDecorationType, notVerifiedDecorations);
     editor.setDecorations(greenDecorationType, greenDecorations);
+    
+    // Mark document as processed
+    processedDocuments.set(docKey, { hash: textHash, version: document.version });
+    
+    // Persist cache periodically
+    saveCacheToStorage();
   };
 
   const onDidOpenTextDocument = vscode.workspace.onDidOpenTextDocument(
     async (document) => {
-      const editors = vscode.window.visibleTextEditors;
-
-      if (editors.length > 0) {
-        for (const editor of editors) {
-          await applyDecorations(editor);
-        }
-      } else {
-        outputChannel.appendLine(
-          `No visible editors found for document: ${document.fileName}`
-        );
+      // Only apply decorations to the active editor for this document
+      const editor = vscode.window.activeTextEditor;
+      if (editor && editor.document === document) {
+        await applyDecorations(editor);
       }
     }
   );
@@ -168,68 +210,307 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(onDidChangeTextDocument);
   context.subscriptions.push(onDidOpenTextDocument);
   context.subscriptions.push(onDidChangeActiveTextEditor);
+  
+  // Apply decorations to currently active editor on activation
+  if (vscode.window.activeTextEditor) {
+    applyDecorations(vscode.window.activeTextEditor);
+  }
 }
 
-async function inspectGreenHosting(
-  url: string
-): Promise<{ green: boolean; hostedBy?: string }> {
-  const now = Date.now();
+// Simple hash function for change detection
+function simpleHash(str: string): number {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32-bit integer
+  }
+  return hash;
+}
 
-  // Check if the URL is cached and still valid
-  if (urlCache.has(url)) {
-    const cached = urlCache.get(url)!;
-    if (now - cached.timestamp < CACHE_EXPIRY) {
-      outputChannel.appendLine(`Cache hit for URL: ${url}`);
-      return { green: cached.green, hostedBy: cached.hostedBy };
-    } else {
-      outputChannel.appendLine(`Cache expired for URL: ${url}`);
-      urlCache.delete(url); // Remove expired cache
+// Restore cache from VS Code's persistent storage
+function restoreCacheFromStorage() {
+  try {
+    const stored = globalState.get<Record<string, CacheEntry>>(CACHE_STORAGE_KEY);
+    if (stored) {
+      const now = Date.now();
+      let restoredCount = 0;
+      for (const [key, value] of Object.entries(stored)) {
+        // Only restore non-expired entries
+        if (now - value.timestamp < CACHE_EXPIRY) {
+          urlCache.set(key, value);
+          restoredCount++;
+        }
+      }
+      outputChannel.appendLine(`Restored ${restoredCount} cached domain results from storage`);
+    }
+  } catch (error) {
+    outputChannel.appendLine(`Failed to restore cache: ${error}`);
+  }
+}
+
+// Save cache to VS Code's persistent storage
+function saveCacheToStorage() {
+  try {
+    const cacheObject: Record<string, CacheEntry> = {};
+    urlCache.forEach((value, key) => {
+      cacheObject[key] = value;
+    });
+    globalState.update(CACHE_STORAGE_KEY, cacheObject);
+  } catch (error) {
+    outputChannel.appendLine(`Failed to save cache: ${error}`);
+  }
+}
+
+// Batch check multiple domains at once
+async function batchInspectGreenHosting(
+  domains: string[]
+): Promise<Map<string, { green: boolean | null; hostedBy?: string; error?: string }>> {
+  const results = new Map<string, { green: boolean | null; hostedBy?: string; error?: string }>();
+  const now = Date.now();
+  const domainsToCheck: string[] = [];
+
+  // First, check cache for all domains
+  for (const domain of domains) {
+    if (urlCache.has(domain)) {
+      const cached = urlCache.get(domain)!;
+      if (now - cached.timestamp < CACHE_EXPIRY) {
+        outputChannel.appendLine(`Cache hit for domain: ${domain}`);
+        results.set(domain, { green: cached.green, hostedBy: cached.hostedBy, error: cached.error });
+        continue;
+      } else {
+        urlCache.delete(domain);
+      }
+    }
+    domainsToCheck.push(domain);
+  }
+
+  if (domainsToCheck.length === 0) {
+    return results;
+  }
+
+  outputChannel.appendLine(`Checking ${domainsToCheck.length} domains via API...`);
+
+  // Use batch API for multiple domains (up to 500 per request)
+  const BATCH_SIZE = 100;
+  for (let i = 0; i < domainsToCheck.length; i += BATCH_SIZE) {
+    const batch = domainsToCheck.slice(i, i + BATCH_SIZE);
+    
+    try {
+      if (batch.length === 1) {
+        // Single domain - use simple endpoint
+        const result = await checkSingleDomain(batch[0]);
+        results.set(batch[0], result);
+        urlCache.set(batch[0], { ...result, timestamp: now });
+      } else {
+        // Multiple domains - use batch endpoint
+        const batchResults = await checkMultipleDomains(batch);
+        for (const [domain, result] of batchResults) {
+          results.set(domain, result);
+          urlCache.set(domain, { ...result, timestamp: now });
+        }
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      outputChannel.appendLine(`Batch API error: ${errorMsg}`);
+      // Fallback to individual checks
+      for (const domain of batch) {
+        try {
+          const result = await checkSingleDomain(domain);
+          results.set(domain, result);
+          urlCache.set(domain, { ...result, timestamp: now });
+        } catch (e) {
+          const domainError = e instanceof Error ? e.message : String(e);
+          outputChannel.appendLine(`Error checking ${domain}: ${domainError}`);
+          const errorResult = { green: null as boolean | null, error: domainError };
+          results.set(domain, errorResult);
+          urlCache.set(domain, { ...errorResult, timestamp: now });
+        }
+      }
     }
   }
 
-  const apiUrl = `https://api.thegreenwebfoundation.org/api/v3/greencheck/${encodeURIComponent(
-    url
-  )}`;
+  return results;
+}
 
-  let data: GreenCheckResponse;
-  try {
-    const response = await fetch(apiUrl);
-    data = (await response.json()) as GreenCheckResponse;
-  } catch (error) {
-    outputChannel.appendLine(`Error: ${JSON.stringify(error)}`);
-    return { green: false };
+async function checkSingleDomain(domain: string): Promise<{ green: boolean | null; hostedBy?: string; error?: string }> {
+  const apiUrl = `https://api.thegreenwebfoundation.org/api/v3/greencheck/${encodeURIComponent(domain)}`;
+  
+  const response = await fetch(apiUrl);
+  if (!response.ok) {
+    if (response.status === 429) {
+      throw new Error('Rate limited - too many requests');
+    }
+    throw new Error(`API error (HTTP ${response.status})`);
   }
-
-  // Cache the result with a timestamp
-  const result = {
-    green: data.green,
-    hostedBy: data.hosted_by,
-    timestamp: now,
-  };
-  urlCache.set(url, result);
-
+  
+  const data = (await response.json()) as GreenCheckResponse;
   return { green: data.green, hostedBy: data.hosted_by };
 }
 
-function extractUrls(text: string): string[] {
-  const urlRegex =
-    /['"`](?:\w*\s*)(https?:\/\/)?(www\.)?(\b([a-zA-Z0-9-]+\.)?[a-zA-Z0-9-]+\.[a-zA-Z]{2,})(?:\W)?.*['"`\n]/g;
+async function checkMultipleDomains(domains: string[]): Promise<Map<string, { green: boolean | null; hostedBy?: string; error?: string }>> {
+  const results = new Map<string, { green: boolean | null; hostedBy?: string; error?: string }>();
+  
+  // Green Web Foundation batch API
+  const apiUrl = 'https://api.thegreenwebfoundation.org/api/v3/greencheck';
+  
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(domains),
+  });
+  
+  if (!response.ok) {
+    if (response.status === 429) {
+      throw new Error('Rate limited - too many requests');
+    }
+    throw new Error(`Batch API error (HTTP ${response.status})`);
+  }
+  
+  const data = await response.json() as Record<string, GreenCheckResponse>;
+  
+  for (const domain of domains) {
+    const result = data[domain];
+    if (result) {
+      results.set(domain, { green: result.green, hostedBy: result.hosted_by });
+    } else {
+      results.set(domain, { green: null, error: 'Domain not found in API response' });
+    }
+  }
+  
+  return results;
+}
 
-  const matches: string[] = [];
-  let match;
+/**
+ * Extract URLs from text and return their positions in the document.
+ * This regex handles:
+ * - Full URLs: https://example.com/path, http://www.example.com
+ * - Protocol-relative URLs: //example.com/path
+ * - Bare domains in strings: "example.com", 'api.example.com'
+ * - URLs in comments, strings, HTML attributes, etc.
+ */
+function extractUrlsWithRanges(document: vscode.TextDocument): UrlMatch[] {
+  const text = document.getText();
+  const matches: UrlMatch[] = [];
+  
+  // Common file extensions and keywords to exclude (not domains)
+  const excludePatterns = new Set([
+    // File extensions
+    'js', 'ts', 'tsx', 'jsx', 'css', 'scss', 'sass', 'less', 'html', 'htm',
+    'json', 'xml', 'yaml', 'yml', 'md', 'txt', 'csv', 'svg', 'png', 'jpg',
+    'jpeg', 'gif', 'ico', 'woff', 'woff2', 'ttf', 'eot', 'pdf', 'zip', 'tar',
+    'gz', 'rar', '7z', 'exe', 'dll', 'so', 'dylib', 'py', 'rb', 'php', 'java',
+    'go', 'rs', 'c', 'cpp', 'h', 'hpp', 'cs', 'swift', 'kt', 'sh', 'bash',
+    'zsh', 'fish', 'ps1', 'bat', 'cmd', 'env', 'lock', 'log', 'map', 'vue',
+    'svelte', 'astro', 'prisma', 'graphql', 'sql', 'db', 'sqlite', 'config',
+    // Common patterns that look like domains but aren't
+    'localhost', 'example.com', 'example.org', 'example.net', 'test.com',
+    'package.json', 'package-lock.json', 'tsconfig.json', 'webpack.config',
+    'babel.config', 'eslint.config', 'prettier.config', 'jest.config',
+  ]);
 
-  // Extract all matches
-  while ((match = urlRegex.exec(text)) !== null) {
-    matches.push(match[3]);
+  // TLDs that are commonly used (to reduce false positives)
+  const validTlds = new Set([
+    'com', 'org', 'net', 'io', 'co', 'dev', 'app', 'ai', 'cloud', 'tech',
+    'edu', 'gov', 'mil', 'int', 'eu', 'uk', 'de', 'fr', 'it', 'es', 'nl',
+    'be', 'ch', 'at', 'au', 'ca', 'us', 'jp', 'cn', 'kr', 'in', 'br', 'ru',
+    'pl', 'se', 'no', 'dk', 'fi', 'cz', 'pt', 'ie', 'nz', 'za', 'mx', 'ar',
+    'cl', 'co', 'pe', 've', 'info', 'biz', 'name', 'pro', 'museum', 'aero',
+    'jobs', 'mobi', 'travel', 'xxx', 'asia', 'cat', 'coop', 'tel', 'post',
+    'me', 'tv', 'cc', 'ws', 'fm', 'am', 'ly', 'gl', 'gg', 'to', 'is', 'it',
+    'st', 'su', 'ac', 'sh', 'cx', 'nu', 'tk', 'cf', 'ga', 'gq', 'ml',
+  ]);
+
+  // Regex for full URLs (with protocol)
+  const fullUrlRegex = /https?:\/\/(?:www\.)?([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,})(?:\/[^\s"'`<>)\]]*)?/gi;
+  
+  // Regex for domains without protocol (can appear anywhere in text)
+  // Matches: google.com, www.google.com, api.google.com/path, etc.
+  const domainRegex = /(?<![a-zA-Z0-9@/])(?:www\.)?([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.([a-zA-Z]{2,}))(?:\/[^\s"'`<>)\]]*)?(?![a-zA-Z0-9])/gi;
+
+  // Process full URLs
+  let match: RegExpExecArray | null;
+  while ((match = fullUrlRegex.exec(text)) !== null) {
+    const fullUrl = match[0];
+    const domain = match[1].toLowerCase();
+    
+    if (isValidDomain(domain, excludePatterns, validTlds)) {
+      const startPos = document.positionAt(match.index);
+      const endPos = document.positionAt(match.index + fullUrl.length);
+      matches.push({
+        url: fullUrl,
+        domain: domain,
+        range: new vscode.Range(startPos, endPos),
+      });
+    }
   }
 
-  return matches.filter((url) => {
-    if (url.includes('localhost')) {
+  // Process domains in strings (no protocol)
+  let domainMatch: RegExpExecArray | null;
+  while ((domainMatch = domainRegex.exec(text)) !== null) {
+    const fullMatch = domainMatch[0];
+    const domain = domainMatch[1].toLowerCase();
+    const tld = domainMatch[2].toLowerCase();
+    
+    // Check if this domain was already matched as a full URL
+    const alreadyMatched = matches.some(m => {
+      const mStart = document.offsetAt(m.range.start);
+      const mEnd = document.offsetAt(m.range.end);
+      return (domainMatch!.index >= mStart && domainMatch!.index < mEnd);
+    });
+    
+    if (!alreadyMatched && isValidDomain(domain, excludePatterns, validTlds) && validTlds.has(tld)) {
+      // Include the full match (www. + domain + optional path)
+      const startPos = document.positionAt(domainMatch.index);
+      const endPos = document.positionAt(domainMatch.index + fullMatch.length);
+      matches.push({
+        url: fullMatch,
+        domain: domain,
+        range: new vscode.Range(startPos, endPos),
+      });
+    }
+  }
+
+  return matches;
+}
+
+function isValidDomain(domain: string, excludePatterns: Set<string>, validTlds: Set<string>): boolean {
+  const lowerDomain = domain.toLowerCase();
+  
+  // Exclude localhost and IP addresses
+  if (lowerDomain.includes('localhost') || /^\d+\.\d+\.\d+\.\d+/.test(domain)) {
+    return false;
+  }
+  
+  // Check against exclude patterns
+  if (excludePatterns.has(lowerDomain)) {
+    return false;
+  }
+  
+  // Check if it looks like a file path (contains common file extension patterns)
+  const parts = lowerDomain.split('.');
+  const lastPart = parts[parts.length - 1];
+  
+  // Must have a valid TLD
+  if (!validTlds.has(lastPart)) {
+    return false;
+  }
+  
+  // Check if any part matches excluded patterns
+  for (const part of parts) {
+    if (excludePatterns.has(part) && parts.length <= 2) {
       return false;
     }
-    const ipRegex = /^(https?:\/\/)?(\d{1,3}\.){3}\d{1,3}/;
-    return !ipRegex.test(url);
-  });
+  }
+  
+  // Minimum domain length check
+  if (domain.length < 4) {
+    return false;
+  }
+  
+  return true;
 }
 
 export function deactivate() {}

@@ -1,8 +1,8 @@
 {
   "name": "green-hosting-inspector",
   "displayName": "Green Hosting Inspector",
-  "description": "A VS Code extension to check if URLs are hosted on green hosting providers.",
-  "version": "1.0.0",
+  "description": "Check if URLs in your code are hosted on green, renewable-energy powered infrastructure. Powered by the Green Web Foundation.",
+  "version": "2.0.0",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -73,8 +73,5 @@
     "esbuild": "^0.25.2",
     "eslint": "^9.23.0",
     "typescript": "^5.8.2"
-  },
-  "dependencies": {
-    "axios": "^1.8.4"
   }
 }
