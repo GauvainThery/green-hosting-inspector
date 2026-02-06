@@ -6,9 +6,13 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [2.1.1] - 2026-02-06
 
+### Added
+
+- **Expanded language support**: Added support for React variants (javascriptreact, typescriptreact), CSS preprocessors (sass, less), JSON with comments (jsonc), and template engines (astro, handlebars, ejs, twig, razor, blade).
+
 ### Fixed
 
-- **Improved domain validation**: Removed `'name'` from valid TLDs list to prevent false positives with the common `.name` property in code.
+- **Improved domain regex**: Enhanced pattern matching to exclude underscored identifiers, preventing false positives with variable names containing underscores.
 
 ## [2.1.0] - 2026-02-06
 

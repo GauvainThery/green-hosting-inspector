@@ -8,14 +8,21 @@ export interface DomainCheckResult {
 
 export const SUPPORTED_LANGUAGES = new Set([
   'javascript',
+  'javascriptreact',
   'typescript',
+  'typescriptreact',
   'python',
   'java',
   'csharp',
   'html',
   'css',
+  'scss',
+  'sass',
+  'less',
   'json',
+  'jsonc',
   'xml',
+  'yaml',
   'markdown',
   'php',
   'ruby',
@@ -23,8 +30,12 @@ export const SUPPORTED_LANGUAGES = new Set([
   'rust',
   'vue',
   'svelte',
-  'scss',
-  'yaml',
+  'astro',
+  'handlebars',
+  'ejs',
+  'twig',
+  'razor',
+  'blade',
   'dockerfile',
   'shellscript',
   'r',
@@ -89,7 +100,7 @@ export const VALID_TLDS = new Set([
 export const FULL_URL_REGEX = /https?:\/\/(?:www\.)?([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,})(?:\/[^\s"'`<>)\]]*)?/gi;
 
 // Regex for domains without protocol (can appear anywhere in text)
-export const DOMAIN_REGEX = /(?<![a-zA-Z0-9@/])(?:www\.)?([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.([a-zA-Z]{2,}))(?:\/[^\s"'`<>)\]]*)?(?![a-zA-Z0-9])/gi;
+export const DOMAIN_REGEX = /(?<![a-zA-Z0-9@/_])(?:www\.)?([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.([a-zA-Z]{2,}))(?:\/[^\s"'`<>)\]]*)?(?![a-zA-Z0-9_])/gi;
 
 export function isValidDomain(domain: string): boolean {
   const lower = domain.toLowerCase();
