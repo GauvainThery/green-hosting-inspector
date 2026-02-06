@@ -79,7 +79,7 @@ export const VALID_TLDS = new Set([
   'edu', 'gov', 'mil', 'int', 'eu', 'uk', 'de', 'fr', 'it', 'es', 'nl',
   'be', 'ch', 'at', 'au', 'ca', 'us', 'jp', 'cn', 'kr', 'in', 'br', 'ru',
   'pl', 'se', 'no', 'dk', 'fi', 'cz', 'pt', 'ie', 'nz', 'za', 'mx', 'ar',
-  'cl', 'co', 'pe', 've', 'info', 'biz', 'name', 'pro', 'museum', 'aero',
+  'cl', 'co', 'pe', 've', 'info', 'biz', 'pro', 'museum', 'aero',
   'jobs', 'mobi', 'travel', 'xxx', 'asia', 'cat', 'coop', 'tel', 'post',
   'me', 'tv', 'cc', 'ws', 'fm', 'am', 'ly', 'gl', 'gg', 'to', 'is', 'it',
   'st', 'su', 'ac', 'sh', 'cx', 'nu', 'tk', 'cf', 'ga', 'gq', 'ml',

@@ -4,6 +4,12 @@ All notable changes to the "green-hosting-inspector" extension will be documente
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [2.1.1] - 2026-02-06
+
+### Fixed
+
+- **Improved domain validation**: Removed `'name'` from valid TLDs list to prevent false positives with the common `.name` property in code.
+
 ## [2.1.0] - 2026-02-06
 
 ### Added
