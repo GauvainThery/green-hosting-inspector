@@ -1,4 +1,15 @@
 import * as vscode from 'vscode';
+import { MetricsPanel } from './metricsPanel';
+import {
+  DomainCheckResult,
+  SUPPORTED_LANGUAGES,
+  EXCLUDE_PATTERNS,
+  CODE_KEYWORDS,
+  VALID_TLDS,
+  FULL_URL_REGEX,
+  DOMAIN_REGEX,
+  isValidDomain,
+} from './domainUtils';
 
 interface GreenCheckResponse {
   green: boolean;
@@ -64,31 +75,7 @@ export function activate(context: vscode.ExtensionContext) {
   const applyDecorations = async (editor: vscode.TextEditor) => {
     const document = editor.document;
 
-    const supportedLanguages = [
-      'javascript',
-      'typescript',
-      'python',
-      'java',
-      'csharp',
-      'html',
-      'css',
-      'json',
-      'xml',
-      'markdown',
-      'php',
-      'ruby',
-      'go',
-      'rust',
-      'vue',
-      'svelte',
-      'scss',
-      'yaml',
-      'dockerfile',
-      'shellscript',
-      'r',
-      'plaintext',
-    ];
-    if (!supportedLanguages.includes(document.languageId)) {
+    if (!SUPPORTED_LANGUAGES.has(document.languageId)) {
       return;
     }
 
@@ -226,6 +213,20 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(onDidOpenTextDocument);
   context.subscriptions.push(onDidChangeActiveTextEditor);
 
+  // Register show metrics command
+  const showMetricsCommand = vscode.commands.registerCommand(
+    'greenHostingInspector.showMetrics',
+    () => {
+      MetricsPanel.createOrShow(
+        context.extensionUri,
+        batchInspectGreenHosting,
+        saveCacheToStorage,
+        outputChannel,
+      );
+    }
+  );
+  context.subscriptions.push(showMetricsCommand);
+
   // Register clear cache command
   const clearCacheCommand = vscode.commands.registerCommand(
     'greenHostingInspector.clearCache',
@@ -247,6 +248,16 @@ export function activate(context: vscode.ExtensionContext) {
   if (vscode.window.activeTextEditor) {
     applyDecorations(vscode.window.activeTextEditor);
   }
+
+  // Show welcome message with link to metrics dashboard
+  vscode.window.showInformationMessage(
+    '🌱 Green Hosting Inspector is active!',
+    'View Repository Metrics'
+  ).then(selection => {
+    if (selection === 'View Repository Metrics') {
+      vscode.commands.executeCommand('greenHostingInspector.showMetrics');
+    }
+  });
 }
 
 // Simple hash function for change detection
@@ -297,8 +308,8 @@ function saveCacheToStorage() {
 // Batch check multiple domains at once
 async function batchInspectGreenHosting(
   domains: string[]
-): Promise<Map<string, { green: boolean | null; hostedBy?: string; error?: string }>> {
-  const results = new Map<string, { green: boolean | null; hostedBy?: string; error?: string }>();
+): Promise<Map<string, DomainCheckResult>> {
+  const results = new Map<string, DomainCheckResult>();
   const now = Date.now();
   const domainsToCheck: string[] = [];
 
@@ -345,7 +356,7 @@ async function batchInspectGreenHosting(
   return results;
 }
 
-async function checkSingleDomain(domain: string): Promise<{ green: boolean | null; hostedBy?: string; error?: string }> {
+async function checkSingleDomain(domain: string): Promise<DomainCheckResult> {
   const apiUrl = `https://api.thegreenwebfoundation.org/api/v3/greencheck/${encodeURIComponent(domain)}`;
   
   outputChannel.appendLine(`Checking domain: ${domain}`);
@@ -375,78 +386,15 @@ async function checkSingleDomain(domain: string): Promise<{ green: boolean | nul
 function extractUrlsWithRanges(document: vscode.TextDocument): UrlMatch[] {
   const text = document.getText();
   const matches: UrlMatch[] = [];
-  
-  // Common file extensions and keywords to exclude (not domains)
-  const excludePatterns = new Set([
-    // File extensions
-    'js', 'ts', 'tsx', 'jsx', 'css', 'scss', 'sass', 'less', 'html', 'htm',
-    'json', 'xml', 'yaml', 'yml', 'md', 'txt', 'csv', 'svg', 'png', 'jpg',
-    'jpeg', 'gif', 'ico', 'woff', 'woff2', 'ttf', 'eot', 'pdf', 'zip', 'tar',
-    'gz', 'rar', '7z', 'exe', 'dll', 'so', 'dylib', 'py', 'rb', 'php', 'java',
-    'go', 'rs', 'c', 'cpp', 'h', 'hpp', 'cs', 'swift', 'kt', 'sh', 'bash',
-    'zsh', 'fish', 'ps1', 'bat', 'cmd', 'env', 'lock', 'log', 'map', 'vue',
-    'svelte', 'astro', 'prisma', 'graphql', 'sql', 'db', 'sqlite', 'config',
-    // Common patterns that look like domains but aren't
-    'localhost', 'example.com', 'example.org', 'example.net', 'test.com',
-    'package.json', 'package-lock.json', 'tsconfig.json', 'webpack.config',
-    'babel.config', 'eslint.config', 'prettier.config', 'jest.config',
-  ]);
-
-  // Code keywords/objects that should never be treated as domains
-  const codeKeywords = new Set([
-    // JavaScript/TypeScript keywords and objects
-    'this', 'self', 'super', 'import', 'export', 'require', 'module', 'exports',
-    'console', 'logger', 'log', 'debug', 'error', 'warn', 'info', 'trace',
-    'window', 'document', 'navigator', 'location', 'history', 'screen',
-    'process', 'global', 'globalThis', 'Buffer',
-    'Math', 'JSON', 'Object', 'Array', 'String', 'Number', 'Boolean', 'Symbol',
-    'Date', 'Promise', 'Proxy', 'Reflect', 'Map', 'Set', 'WeakMap', 'WeakSet',
-    'Error', 'TypeError', 'RangeError', 'SyntaxError', 'ReferenceError',
-    'Function', 'RegExp', 'Int8Array', 'Uint8Array', 'Float32Array', 'Float64Array',
-    'Intl', 'Atomics', 'SharedArrayBuffer', 'DataView', 'ArrayBuffer',
-    // Common variable names
-    'app', 'server', 'client', 'db', 'database', 'api', 'router', 'route',
-    'req', 'res', 'request', 'response', 'ctx', 'context', 'config', 'options',
-    'props', 'state', 'store', 'dispatch', 'action', 'reducer', 'selector',
-    'component', 'element', 'node', 'event', 'handler', 'callback', 'listener',
-    'util', 'utils', 'helper', 'helpers', 'service', 'services', 'controller',
-    'model', 'schema', 'type', 'types', 'interface', 'enum',
-    // Python
-    'print', 'len', 'str', 'int', 'float', 'list', 'dict', 'tuple', 'set',
-    'cls', 'kwargs', 'args',
-    // Testing
-    'describe', 'it', 'test', 'expect', 'assert', 'mock', 'spy', 'jest', 'vi',
-    // React/Vue/Angular
-    'React', 'Vue', 'Angular', 'Component', 'Directive', 'Pipe', 'Injectable',
-    'useState', 'useEffect', 'useRef', 'useMemo', 'useCallback', 'useContext',
-  ]);
-
-  // TLDs that are commonly used (to reduce false positives)
-  const validTlds = new Set([
-    'com', 'org', 'net', 'io', 'co', 'dev', 'app', 'ai', 'cloud', 'tech',
-    'edu', 'gov', 'mil', 'int', 'eu', 'uk', 'de', 'fr', 'it', 'es', 'nl',
-    'be', 'ch', 'at', 'au', 'ca', 'us', 'jp', 'cn', 'kr', 'in', 'br', 'ru',
-    'pl', 'se', 'no', 'dk', 'fi', 'cz', 'pt', 'ie', 'nz', 'za', 'mx', 'ar',
-    'cl', 'co', 'pe', 've', 'info', 'biz', 'name', 'pro', 'museum', 'aero',
-    'jobs', 'mobi', 'travel', 'xxx', 'asia', 'cat', 'coop', 'tel', 'post',
-    'me', 'tv', 'cc', 'ws', 'fm', 'am', 'ly', 'gl', 'gg', 'to', 'is', 'it',
-    'st', 'su', 'ac', 'sh', 'cx', 'nu', 'tk', 'cf', 'ga', 'gq', 'ml',
-  ]);
-
-  // Regex for full URLs (with protocol)
-  const fullUrlRegex = /https?:\/\/(?:www\.)?([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.[a-zA-Z]{2,})(?:\/[^\s"'`<>)\]]*)?/gi;
-  
-  // Regex for domains without protocol (can appear anywhere in text)
-  // Matches: google.com, www.google.com, api.google.com/path, etc.
-  const domainRegex = /(?<![a-zA-Z0-9@/])(?:www\.)?([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*\.([a-zA-Z]{2,}))(?:\/[^\s"'`<>)\]]*)?(?![a-zA-Z0-9])/gi;
 
   // Process full URLs
   let match: RegExpExecArray | null;
+  const fullUrlRegex = new RegExp(FULL_URL_REGEX);
   while ((match = fullUrlRegex.exec(text)) !== null) {
     const fullUrl = match[0];
     const domain = match[1].toLowerCase();
     
-    if (isValidDomain(domain, excludePatterns, validTlds)) {
+    if (isValidDomain(domain)) {
       const startPos = document.positionAt(match.index);
       const endPos = document.positionAt(match.index + fullUrl.length);
       matches.push({
@@ -459,6 +407,7 @@ function extractUrlsWithRanges(document: vscode.TextDocument): UrlMatch[] {
 
   // Process domains in strings (no protocol)
   let domainMatch: RegExpExecArray | null;
+  const domainRegex = new RegExp(DOMAIN_REGEX);
   while ((domainMatch = domainRegex.exec(text)) !== null) {
     const fullMatch = domainMatch[0];
     const domain = domainMatch[1].toLowerCase();
@@ -468,7 +417,7 @@ function extractUrlsWithRanges(document: vscode.TextDocument): UrlMatch[] {
     
     // Skip if the first part of the domain is a known code keyword
     // e.g., "logger.info", "this.service", "console.log"
-    if (codeKeywords.has(firstPart)) {
+    if (CODE_KEYWORDS.has(firstPart)) {
       continue;
     }
     
@@ -497,7 +446,7 @@ function extractUrlsWithRanges(document: vscode.TextDocument): UrlMatch[] {
       return (domainMatch!.index >= mStart && domainMatch!.index < mEnd);
     });
     
-    if (!alreadyMatched && isValidDomain(domain, excludePatterns, validTlds) && validTlds.has(tld)) {
+    if (!alreadyMatched && isValidDomain(domain) && VALID_TLDS.has(tld)) {
       // Include the full match (www. + domain + optional path)
       const startPos = document.positionAt(domainMatch.index);
       const endPos = document.positionAt(domainMatch.index + fullMatch.length);
@@ -510,43 +459,6 @@ function extractUrlsWithRanges(document: vscode.TextDocument): UrlMatch[] {
   }
 
   return matches;
-}
-
-function isValidDomain(domain: string, excludePatterns: Set<string>, validTlds: Set<string>): boolean {
-  const lowerDomain = domain.toLowerCase();
-  
-  // Exclude localhost and IP addresses
-  if (lowerDomain.includes('localhost') || /^\d+\.\d+\.\d+\.\d+/.test(domain)) {
-    return false;
-  }
-  
-  // Check against exclude patterns
-  if (excludePatterns.has(lowerDomain)) {
-    return false;
-  }
-  
-  // Check if it looks like a file path (contains common file extension patterns)
-  const parts = lowerDomain.split('.');
-  const lastPart = parts[parts.length - 1];
-  
-  // Must have a valid TLD
-  if (!validTlds.has(lastPart)) {
-    return false;
-  }
-  
-  // Check if any part matches excluded patterns
-  for (const part of parts) {
-    if (excludePatterns.has(part) && parts.length <= 2) {
-      return false;
-    }
-  }
-  
-  // Minimum domain length check
-  if (domain.length < 4) {
-    return false;
-  }
-  
-  return true;
 }
 
 export function deactivate() {}

@@ -2,7 +2,7 @@
   "name": "green-hosting-inspector",
   "displayName": "Green Hosting Inspector",
   "description": "Check if URLs in your code are hosted on green, renewable-energy powered infrastructure. Powered by the Green Web Foundation.",
-  "version": "2.0.2",
+  "version": "2.1.0",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -55,6 +55,10 @@
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
+      {
+        "command": "greenHostingInspector.showMetrics",
+        "title": "Green Hosting Inspector: Repository Metrics"
+      },
       {
         "command": "greenHostingInspector.clearCache",
         "title": "Green Hosting Inspector: Clear Cache"

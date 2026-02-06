@@ -4,6 +4,25 @@ All notable changes to the "green-hosting-inspector" extension will be documente
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [2.1.0] - 2026-02-06
+
+### Added
+
+- **Repository Metrics Dashboard**: New command to view workspace-wide green hosting statistics.
+  - Summary cards showing total URLs, unique domains, green vs not-verified counts
+  - Visual percentage bar displaying green hosting ratio at a glance
+  - Detailed table with each domain's status, hosting provider, and file locations
+  - One-click refresh to rescan the workspace
+  - Legend explaining green/yellow indicators
+  - Display of scan limits and exclusions
+- **Welcome message**: Shows informational message on extension activation with quick access to metrics dashboard.
+
+### Improved
+
+- **Code organization**: Refactored shared domain validation logic into `domainUtils.ts` module for better maintainability.
+- **Performance**: Moved supported languages to module-level Set constant to avoid recreation on every decoration.
+- **Type safety**: Added `DomainCheckResult` interface for better type consistency across modules.
+
 ## [2.0.2] - 2026-02-02
 
 ### Fixed

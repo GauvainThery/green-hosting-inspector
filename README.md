@@ -20,10 +20,17 @@ The Green Hosting Inspector is a Visual Studio Code extension that checks if URL
   - Green hosting status
   - Hosting provider name (if known)
   - Links to learn more or find green hosting providers
+- 📊 **Repository Metrics Dashboard**: Get an overview of your entire repository:
+  - Total URLs and unique domains count
+  - Green-hosted vs not-verified statistics
+  - Visual percentage bar showing green hosting ratio
+  - Detailed table with each domain's status, hosting provider, and file locations
+  - One-click refresh to rescan your workspace
 - ⚡ **High Performance**:
   - Results cached for 1 week (persists across VS Code restarts)
   - Batch API calls for multiple URLs
   - Smart change detection to avoid redundant scans
+  - Lightweight scanning (skips large files and build artifacts)
 
 ## 📦 Installation
 
@@ -36,12 +43,29 @@ Alternatively, you can install it from the [Visual Studio Code Marketplace](http
 
 ## 🧑‍💻 How to Use
 
+### Inline URL Checking
+
 1. Open a file in VS Code that contains URLs (e.g., `.js`, `.ts`, `.html`, `.py`, etc.).
 2. The extension will automatically detect URLs and check if they are hosted on green hosting providers.
 3. Look for the colored dot before each URL:
    - 🟢 Green = Verified green hosting
    - 🟡 Yellow = No evidence of green hosting
 4. Hover over a URL to see detailed information and helpful links.
+
+### Repository Metrics Dashboard
+
+1. Open the Command Palette (`Ctrl+Shift+P` or `Cmd+Shift+P` on Mac).
+2. Type "Green Hosting Inspector: Repository Metrics" and press Enter.
+3. The dashboard will scan your entire workspace and display:
+   - Summary statistics (total URLs, unique domains, green vs not-verified counts)
+   - A visual percentage bar showing your green hosting ratio
+   - A detailed table of all domains with their green hosting status
+4. Click the "Refresh" button to rescan your workspace at any time.
+
+### Commands
+
+- **Green Hosting Inspector: Repository Metrics** - Open the workspace metrics dashboard
+- **Green Hosting Inspector: Clear Cache** - Clear the cached green hosting results
 
 ## 🤝 Contributing
 
